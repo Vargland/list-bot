@@ -26,11 +26,15 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS items (
                 id SERIAL PRIMARY KEY,
                 chat_id BIGINT NOT NULL,
-                user_id BIGINT NOT NULL,
+                user_id BIGINT,
                 item TEXT NOT NULL,
                 bought BOOLEAN NOT NULL DEFAULT FALSE,
                 added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
+        """)
+        # Migración: agrega columna user_id si la tabla ya existía sin ella
+        await conn.execute("""
+            ALTER TABLE items ADD COLUMN IF NOT EXISTS user_id BIGINT
         """)
 
 
