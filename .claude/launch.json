@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Lista Bot (Telegram)",
+      "runtimeExecutable": "C:\\Users\\WIN 11\\AppData\\Local\\Programs\\Python\\Python314\\python.exe",
+      "runtimeArgs": ["bot.py"],
+      "port": 8443
+    }
+  ]
+}

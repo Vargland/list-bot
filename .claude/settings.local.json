@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip --version)",
+      "Bash(pip show:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(where python3:*)",
+      "Bash(where python3.exe)",
+      "Bash(where py:*)",
+      "Read(//c/Users/**)",
+      "Bash(ls /c/Python*/python.exe)",
+      "Bash(py --version)",
+      "Bash(cmd.exe /c \"python --version && where python\")",
+      "Bash(cmd.exe /c \"python3 --version\")",
+      "Bash(cmd.exe /c \"py --version\")",
+      "Bash(powershell.exe -Command \"Get-Command python | Select-Object -ExpandProperty Source\")",
+      "Bash(powershell.exe -Command \"python --version\")",
+      "Bash(powershell.exe -Command \"Get-ChildItem 'C:\\\\Users\\\\WIN 11\\\\AppData\\\\Local\\\\Programs\\\\Python' -ErrorAction SilentlyContinue | Select-Object Name\")",
+      "Bash(powershell.exe -Command \"& 'C:\\\\Users\\\\WIN 11\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python314\\\\python.exe' --version\")",
+      "Bash(powershell.exe -Command \"& 'C:\\\\Users\\\\WIN 11\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python314\\\\python.exe' -m pip install -r 'E:\\\\Work\\\\list-bot\\\\requirements.txt'\")",
+      "Bash(powershell.exe -Command \"& 'C:\\\\Users\\\\WIN 11\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python314\\\\python.exe' -m pip install --upgrade openai\")",
+      "Bash(powershell.exe -Command \"& 'C:\\\\Users\\\\WIN 11\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python314\\\\python.exe' -m pip install groq\")"
+    ]
+  }
+}
