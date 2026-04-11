@@ -26,20 +26,27 @@ logger = logging.getLogger(__name__)
 
 ASKING_NAME = 1
 
+KEYWORDS_LIST_NAMES = ["dame la lista con nombres", "lista con nombres", "mostrar lista con nombres"]
 KEYWORDS_LIST = ["dame la lista", "la lista", "qué tengo", "que tengo", "mostrar lista"]
 KEYWORDS_TOTAL = ["compré todo", "compre todo", "ya compré todo", "compra total", "limpiar lista", "borrar lista", "lista nueva"]
 KEYWORDS_PARTIAL = ["compré", "compre", "compra parcial", "ya compré", "ya compre"]
 
 
-def _format_list(items: list[dict]) -> str:
+def _format_list(items: list[dict], show_names=False) -> str:
     if not items:
         return "La lista está vacía."
-    lines = "\n".join(f"  {i+1}. {row['item']} — {row['name']}" for i, row in enumerate(items))
+    if show_names:
+        lines = "\n".join(f"  {i+1}. {row['item']} — {row['name']}" for i, row in enumerate(items))
+    else:
+        lines = "\n".join(f"  {i+1}. {row['item']}" for i, row in enumerate(items))
     return f"Lista de compras ({len(items)} items):\n\n{lines}"
 
 
 def _detect_intent(text: str) -> str | None:
     lower = text.lower()
+    for kw in KEYWORDS_LIST_NAMES:
+        if kw in lower:
+            return "list_names"
     for kw in KEYWORDS_LIST:
         if kw in lower:
             return "list"
@@ -106,6 +113,11 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _process_text(chat_id: int, user_id: int, text: str, update: Update):
     intent = _detect_intent(text)
+
+    if intent == "list_names":
+        items = await db.get_items(chat_id)
+        await update.message.reply_text(_format_list(items, show_names=True))
+        return
 
     if intent == "list":
         items = await db.get_items(chat_id)
