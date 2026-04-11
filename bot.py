@@ -127,8 +127,7 @@ async def _process_text(chat_id: int, user_id: int, text: str, update: Update):
     if intent == "total":
         current = await db.get_items(chat_id)
         await db.mark_bought(chat_id, [r["item"] for r in current])
-        await db.clear_bought(chat_id)
-        await update.message.reply_text("Compra total registrada. Lista limpiada, empezamos de cero!")
+        await update.message.reply_text("Compra total registrada. Lista nueva lista cuando quieras!")
         return
 
     if intent == "partial":
