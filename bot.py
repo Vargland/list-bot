@@ -23,7 +23,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Palabras clave para detectar intenciones
 KEYWORDS_LIST = ["dame la lista", "la lista", "qué tengo", "que tengo", "mostrar lista"]
 KEYWORDS_TOTAL = ["compré todo", "compre todo", "ya compré todo", "compra total", "limpiar lista", "borrar lista", "lista nueva"]
 KEYWORDS_PARTIAL = ["compré", "compre", "compra parcial", "ya compré", "ya compre"]
@@ -44,7 +43,6 @@ def _detect_intent(text: str) -> str | None:
     for kw in KEYWORDS_TOTAL:
         if kw in lower:
             return "total"
-    # "parcial" antes que "compré" para que no haga match con el parcial en total
     if "parcial" in lower:
         return "partial"
     for kw in KEYWORDS_PARTIAL:
@@ -70,18 +68,19 @@ async def _process_text(chat_id: int, text: str, update: Update):
     intent = _detect_intent(text)
 
     if intent == "list":
-        items = db.get_items(chat_id)
+        items = await db.get_items(chat_id)
         await update.message.reply_text(_format_list(items))
         return
 
     if intent == "total":
-        db.mark_bought(chat_id, db.get_items(chat_id))
-        db.clear_bought(chat_id)
+        current = await db.get_items(chat_id)
+        await db.mark_bought(chat_id, current)
+        await db.clear_bought(chat_id)
         await update.message.reply_text("Compra total registrada. Lista limpiada, empezamos de cero!")
         return
 
     if intent == "partial":
-        current = db.get_items(chat_id)
+        current = await db.get_items(chat_id)
         if not current:
             await update.message.reply_text("La lista ya está vacía.")
             return
@@ -96,16 +95,16 @@ async def _process_text(chat_id: int, text: str, update: Update):
             )
             return
 
-        remaining = db.mark_bought(chat_id, bought)
+        remaining = await db.mark_bought(chat_id, bought)
         bought_str = ", ".join(bought)
         msg = f"Listo! Marqué como comprado: {bought_str}\n\n{_format_list(remaining)}"
         await update.message.reply_text(msg)
         return
 
-    # Sin intent detectado → intentar extraer items de compra
+    # Sin intent → extraer items
     items = ai.extract_items(text)
     if items:
-        db.add_items(chat_id, items)
+        await db.add_items(chat_id, items)
         items_str = ", ".join(items)
         await update.message.reply_text(f"Agregué: {items_str}")
     else:
@@ -131,7 +130,6 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Transcripción: {text}")
 
     await update.message.reply_text(f'Escuché: "{text}"')
-
     await _process_text(chat_id, text, update)
 
 
@@ -152,11 +150,13 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(f"⚠️ {msg}")
 
 
-def main():
-    db.init_db()
+async def post_init(app):
+    await db.init_db()
 
+
+def main():
     token = os.environ["TELEGRAM_BOT_TOKEN"]
-    app = ApplicationBuilder().token(token).build()
+    app = ApplicationBuilder().token(token).post_init(post_init).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
@@ -168,6 +168,5 @@ def main():
 
 
 if __name__ == "__main__":
-    # Python 3.14 fix: asyncio no crea el event loop automáticamente
     asyncio.set_event_loop(asyncio.new_event_loop())
     main()

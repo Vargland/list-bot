@@ -1,81 +1,74 @@
 import os
-import psycopg2
-import psycopg2.extras
-from urllib.parse import urlparse
+import asyncpg
+import asyncio
 
-def get_conn():
-    db_url = os.environ["DATABASE_URL"]
-    conn = psycopg2.connect(db_url)
-    return conn
+_pool = None
 
 
-def init_db():
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS items (
-                    id SERIAL PRIMARY KEY,
-                    chat_id BIGINT NOT NULL,
-                    item TEXT NOT NULL,
-                    bought BOOLEAN NOT NULL DEFAULT FALSE,
-                    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-        conn.commit()
+async def get_pool():
+    global _pool
+    if _pool is None:
+        _pool = await asyncpg.create_pool(os.environ["DATABASE_URL"])
+    return _pool
 
 
-def add_items(chat_id: int, items: list[str]):
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            psycopg2.extras.execute_batch(
-                cur,
-                "INSERT INTO items (chat_id, item, bought) VALUES (%s, %s, FALSE)",
-                [(chat_id, item.strip()) for item in items if item.strip()]
+async def init_db():
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS items (
+                id SERIAL PRIMARY KEY,
+                chat_id BIGINT NOT NULL,
+                item TEXT NOT NULL,
+                bought BOOLEAN NOT NULL DEFAULT FALSE,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        conn.commit()
+        """)
 
 
-def get_items(chat_id: int, only_pending=True) -> list[str]:
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            if only_pending:
-                cur.execute(
-                    "SELECT item FROM items WHERE chat_id = %s AND bought = FALSE ORDER BY added_at",
-                    (chat_id,)
-                )
-            else:
-                cur.execute(
-                    "SELECT item FROM items WHERE chat_id = %s ORDER BY added_at",
-                    (chat_id,)
-                )
-            rows = cur.fetchall()
-    return [row[0] for row in rows]
+async def add_items(chat_id: int, items: list[str]):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.executemany(
+            "INSERT INTO items (chat_id, item, bought) VALUES ($1, $2, FALSE)",
+            [(chat_id, item.strip()) for item in items if item.strip()]
+        )
 
 
-def mark_bought(chat_id: int, items_to_mark: list[str]) -> list[str]:
-    """Marca items como comprados. Devuelve los pendientes restantes."""
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            for item in items_to_mark:
-                cur.execute(
-                    "UPDATE items SET bought = TRUE WHERE chat_id = %s AND LOWER(item) = LOWER(%s)",
-                    (chat_id, item.strip())
-                )
-        conn.commit()
-    return get_items(chat_id, only_pending=True)
+async def get_items(chat_id: int, only_pending=True) -> list[str]:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        if only_pending:
+            rows = await conn.fetch(
+                "SELECT item FROM items WHERE chat_id = $1 AND bought = FALSE ORDER BY added_at",
+                chat_id
+            )
+        else:
+            rows = await conn.fetch(
+                "SELECT item FROM items WHERE chat_id = $1 ORDER BY added_at",
+                chat_id
+            )
+    return [row["item"] for row in rows]
 
 
-def clear_bought(chat_id: int):
-    """Elimina los items ya comprados."""
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM items WHERE chat_id = %s AND bought = TRUE", (chat_id,))
-        conn.commit()
+async def mark_bought(chat_id: int, items_to_mark: list[str]) -> list[str]:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        for item in items_to_mark:
+            await conn.execute(
+                "UPDATE items SET bought = TRUE WHERE chat_id = $1 AND LOWER(item) = LOWER($2)",
+                chat_id, item.strip()
+            )
+    return await get_items(chat_id, only_pending=True)
 
 
-def clear_all(chat_id: int):
-    """Elimina todos los items."""
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM items WHERE chat_id = %s", (chat_id,))
-        conn.commit()
+async def clear_bought(chat_id: int):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM items WHERE chat_id = $1 AND bought = TRUE", chat_id)
+
+
+async def clear_all(chat_id: int):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM items WHERE chat_id = $1", chat_id)
