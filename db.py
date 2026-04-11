@@ -1,6 +1,5 @@
 import os
 import asyncpg
-import asyncio
 
 _pool = None
 
@@ -16,9 +15,18 @@ async def init_db():
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id BIGINT NOT NULL,
+                chat_id BIGINT NOT NULL,
+                name TEXT NOT NULL,
+                PRIMARY KEY (user_id, chat_id)
+            )
+        """)
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS items (
                 id SERIAL PRIMARY KEY,
                 chat_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
                 item TEXT NOT NULL,
                 bought BOOLEAN NOT NULL DEFAULT FALSE,
                 added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -26,37 +34,76 @@ async def init_db():
         """)
 
 
-async def add_items(chat_id: int, items: list[str]):
+# --- Usuarios ---
+
+async def get_user_name(user_id: int, chat_id: int) -> str | None:
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.executemany(
-            "INSERT INTO items (chat_id, item, bought) VALUES ($1, $2, FALSE)",
-            [(chat_id, item.strip()) for item in items if item.strip()]
+        row = await conn.fetchrow(
+            "SELECT name FROM users WHERE user_id = $1 AND chat_id = $2",
+            user_id, chat_id
+        )
+    return row["name"] if row else None
+
+
+async def register_user(user_id: int, chat_id: int, name: str):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO users (user_id, chat_id, name) VALUES ($1, $2, $3)
+            ON CONFLICT (user_id, chat_id) DO UPDATE SET name = $3
+            """,
+            user_id, chat_id, name.strip()
         )
 
 
-async def get_items(chat_id: int, only_pending=True) -> list[str]:
+# --- Items ---
+
+async def add_items(chat_id: int, user_id: int, items: list[str]):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.executemany(
+            "INSERT INTO items (chat_id, user_id, item, bought) VALUES ($1, $2, $3, FALSE)",
+            [(chat_id, user_id, item.strip()) for item in items if item.strip()]
+        )
+
+
+async def get_items(chat_id: int, only_pending=True) -> list[dict]:
+    """Devuelve lista de dicts con 'item' y 'name' del usuario que lo agregó."""
     pool = await get_pool()
     async with pool.acquire() as conn:
         if only_pending:
             rows = await conn.fetch(
-                "SELECT item FROM items WHERE chat_id = $1 AND bought = FALSE ORDER BY added_at",
+                """
+                SELECT i.item, u.name
+                FROM items i
+                JOIN users u ON i.user_id = u.user_id AND i.chat_id = u.chat_id
+                WHERE i.chat_id = $1 AND i.bought = FALSE
+                ORDER BY i.added_at
+                """,
                 chat_id
             )
         else:
             rows = await conn.fetch(
-                "SELECT item FROM items WHERE chat_id = $1 ORDER BY added_at",
+                """
+                SELECT i.item, u.name
+                FROM items i
+                JOIN users u ON i.user_id = u.user_id AND i.chat_id = u.chat_id
+                WHERE i.chat_id = $1
+                ORDER BY i.added_at
+                """,
                 chat_id
             )
-    return [row["item"] for row in rows]
+    return [{"item": row["item"], "name": row["name"]} for row in rows]
 
 
-async def mark_bought(chat_id: int, items_to_mark: list[str]) -> list[str]:
+async def mark_bought(chat_id: int, items_to_mark: list[str]) -> list[dict]:
     pool = await get_pool()
     async with pool.acquire() as conn:
         for item in items_to_mark:
             await conn.execute(
-                "UPDATE items SET bought = TRUE WHERE chat_id = $1 AND LOWER(item) = LOWER($2)",
+                "UPDATE items SET bought = TRUE WHERE chat_id = $1 AND LOWER(item) = LOWER($2) AND bought = FALSE",
                 chat_id, item.strip()
             )
     return await get_items(chat_id, only_pending=True)

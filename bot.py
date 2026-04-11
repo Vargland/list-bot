@@ -8,6 +8,7 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
+    ConversationHandler,
     ContextTypes,
     filters,
 )
@@ -23,15 +24,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+ASKING_NAME = 1
+
 KEYWORDS_LIST = ["dame la lista", "la lista", "qué tengo", "que tengo", "mostrar lista"]
 KEYWORDS_TOTAL = ["compré todo", "compre todo", "ya compré todo", "compra total", "limpiar lista", "borrar lista", "lista nueva"]
 KEYWORDS_PARTIAL = ["compré", "compre", "compra parcial", "ya compré", "ya compre"]
 
 
-def _format_list(items: list[str]) -> str:
+def _format_list(items: list[dict]) -> str:
     if not items:
         return "La lista está vacía."
-    lines = "\n".join(f"  {i+1}. {item}" for i, item in enumerate(items))
+    lines = "\n".join(f"  {i+1}. {row['item']} — {row['name']}" for i, row in enumerate(items))
     return f"Lista de compras ({len(items)} items):\n\n{lines}"
 
 
@@ -51,20 +54,57 @@ def _detect_intent(text: str) -> str | None:
     return None
 
 
+async def _ensure_registered(update: Update) -> str | None:
+    """Devuelve el nombre del usuario si está registrado, sino None."""
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    return await db.get_user_name(user_id, chat_id)
+
+
+# --- Registro de nombre ---
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    name = update.effective_user.first_name or "ahí"
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    name = await db.get_user_name(user_id, chat_id)
+
+    if name:
+        await update.message.reply_text(
+            f"Hola {name}! Ya estás registrado.\n\n"
+            "Mandame notas de voz o texto con lo que necesitás comprar."
+        )
+        return ConversationHandler.END
+
     await update.message.reply_text(
-        f"Hola {name}! Soy tu bot de lista de compras.\n\n"
-        "Podés:\n"
-        "  Mandarme notas de voz o texto con lo que necesitás comprar.\n"
-        "  Decirme \"dame la lista\" para ver todo.\n"
-        "  Decirme \"compré todo\" para limpiar la lista.\n"
-        "  Decirme \"compré el pan y la leche\" para marcar como comprado parcialmente.\n\n"
-        "Empezá a agregar cosas cuando quieras!"
+        "Hola! Soy el bot de lista de compras.\n\n"
+        "¿Cómo te llamás? (así sé quién agrega cada cosa a la lista)"
     )
+    return ASKING_NAME
 
 
-async def _process_text(chat_id: int, text: str, update: Update):
+async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = update.message.text.strip()
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+
+    await db.register_user(user_id, chat_id, name)
+    await update.message.reply_text(
+        f"Listo, {name}! Ya podés empezar.\n\n"
+        "Mandame notas de voz o texto con lo que necesitás comprar.\n"
+        "Decime \"dame la lista\" para ver todo.\n"
+        "Decime \"compré todo\" o \"compré el pan\" cuando hagas las compras."
+    )
+    return ConversationHandler.END
+
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Cancelado.")
+    return ConversationHandler.END
+
+
+# --- Lógica principal ---
+
+async def _process_text(chat_id: int, user_id: int, text: str, update: Update):
     intent = _detect_intent(text)
 
     if intent == "list":
@@ -74,7 +114,7 @@ async def _process_text(chat_id: int, text: str, update: Update):
 
     if intent == "total":
         current = await db.get_items(chat_id)
-        await db.mark_bought(chat_id, current)
+        await db.mark_bought(chat_id, [r["item"] for r in current])
         await db.clear_bought(chat_id)
         await update.message.reply_text("Compra total registrada. Lista limpiada, empezamos de cero!")
         return
@@ -86,7 +126,7 @@ async def _process_text(chat_id: int, text: str, update: Update):
             return
 
         await update.message.reply_text("Identificando qué compraste...")
-        bought = ai.identify_bought_items(text, current)
+        bought = ai.identify_bought_items(text, [r["item"] for r in current])
 
         if not bought:
             await update.message.reply_text(
@@ -104,7 +144,7 @@ async def _process_text(chat_id: int, text: str, update: Update):
     # Sin intent → extraer items
     items = ai.extract_items(text)
     if items:
-        await db.add_items(chat_id, items)
+        await db.add_items(chat_id, user_id, items)
         items_str = ", ".join(items)
         await update.message.reply_text(f"Agregué: {items_str}")
     else:
@@ -115,22 +155,40 @@ async def _process_text(chat_id: int, text: str, update: Update):
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await _process_text(update.effective_chat.id, update.message.text, update)
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+
+    name = await db.get_user_name(user_id, chat_id)
+    if not name:
+        await update.message.reply_text(
+            "Primero necesito saber tu nombre. Mandame /start para registrarte."
+        )
+        return
+
+    await _process_text(chat_id, user_id, update.message.text, update)
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     chat_id = update.effective_chat.id
-    await update.message.reply_text("Escuchando tu nota de voz...")
 
+    name = await db.get_user_name(user_id, chat_id)
+    if not name:
+        await update.message.reply_text(
+            "Primero necesito saber tu nombre. Mandame /start para registrarte."
+        )
+        return
+
+    await update.message.reply_text("Escuchando tu nota de voz...")
     voice = update.message.voice
     file = await context.bot.get_file(voice.file_id)
     ogg_bytes = bytes(await file.download_as_bytearray())
 
     text = ai.transcribe_voice(ogg_bytes)
-    logger.info(f"Transcripción: {text}")
+    logger.info(f"Transcripción ({name}): {text}")
 
     await update.message.reply_text(f'Escuché: "{text}"')
-    await _process_text(chat_id, text, update)
+    await _process_text(chat_id, user_id, text, update)
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
@@ -158,7 +216,15 @@ def main():
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     app = ApplicationBuilder().token(token).post_init(post_init).build()
 
-    app.add_handler(CommandHandler("start", start))
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            ASKING_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_name)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+    app.add_handler(conv_handler)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_error_handler(error_handler)
