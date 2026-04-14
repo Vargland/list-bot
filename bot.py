@@ -208,9 +208,14 @@ async def _process_text(chat_id: int, user_id: int, text: str, update: Update):
     # Sin intent → extraer items
     items = ai.extract_items(text)
     if items:
-        await db.add_items(chat_id, user_id, items)
-        items_str = ", ".join(items)
-        await update.message.reply_text(f"Agregué: {items_str}")
+        skipped = await db.add_items(chat_id, user_id, items)
+        added = [i for i in items if i not in skipped]
+        msg = ""
+        if added:
+            msg += f"Agregué: {', '.join(added)}"
+        if skipped:
+            msg += f"\nYa estaba en la lista: {', '.join(skipped)}"
+        await update.message.reply_text(msg.strip())
     else:
         await update.message.reply_text(
             "No encontré items de compra en tu mensaje.\n"

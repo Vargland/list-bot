@@ -64,13 +64,27 @@ async def register_user(user_id: int, chat_id: int, name: str):
 
 # --- Items ---
 
-async def add_items(chat_id: int, user_id: int, items: list[str]):
+async def add_items(chat_id: int, user_id: int, items: list[str]) -> list[str]:
+    """Agrega items que no estén ya pendientes. Devuelve los que fueron ignorados por duplicado."""
     pool = await get_pool()
+    skipped = []
     async with pool.acquire() as conn:
-        await conn.executemany(
-            "INSERT INTO items (chat_id, user_id, item, bought) VALUES ($1, $2, $3, FALSE)",
-            [(chat_id, user_id, item.strip()) for item in items if item.strip()]
-        )
+        for item in items:
+            item = item.strip()
+            if not item:
+                continue
+            exists = await conn.fetchval(
+                "SELECT 1 FROM items WHERE chat_id = $1 AND LOWER(item) = LOWER($2) AND bought = FALSE",
+                chat_id, item
+            )
+            if exists:
+                skipped.append(item)
+            else:
+                await conn.execute(
+                    "INSERT INTO items (chat_id, user_id, item, bought) VALUES ($1, $2, $3, FALSE)",
+                    chat_id, user_id, item
+                )
+    return skipped
 
 
 async def get_items(chat_id: int, only_pending=True) -> list[dict]:
