@@ -30,6 +30,8 @@ KEYWORDS_LIST_NAMES = ["dame la lista con nombres", "lista con nombres", "mostra
 KEYWORDS_LIST = ["dame la lista", "la lista", "qué tengo", "que tengo", "mostrar lista"]
 KEYWORDS_TOTAL = ["compré todo", "compre todo", "ya compré todo", "compra total", "limpiar lista", "borrar lista", "lista nueva"]
 KEYWORDS_PARTIAL = ["compré", "compre", "compra parcial", "ya compré", "ya compre"]
+KEYWORDS_DELETE = ["borrá", "borra", "elimina", "eliminá", "sacá", "saca", "quita", "quitá", "remove", "delete"]
+KEYWORDS_EDIT = ["cambiá", "cambia", "reemplazá", "reemplaza", "editá", "edita", "renombrá", "renombra"]
 
 
 def _format_list(items: list[dict], show_names=False) -> str:
@@ -58,6 +60,12 @@ def _detect_intent(text: str) -> str | None:
     for kw in KEYWORDS_PARTIAL:
         if kw in lower:
             return "partial"
+    for kw in KEYWORDS_EDIT:
+        if kw in lower:
+            return "edit"
+    for kw in KEYWORDS_DELETE:
+        if kw in lower:
+            return "delete"
     return None
 
 
@@ -150,6 +158,51 @@ async def _process_text(chat_id: int, user_id: int, text: str, update: Update):
         bought_str = ", ".join(bought)
         msg = f"Listo! Marqué como comprado: {bought_str}\n\n{_format_list(remaining)}"
         await update.message.reply_text(msg)
+        return
+
+    if intent == "delete":
+        current = await db.get_items(chat_id)
+        if not current:
+            await update.message.reply_text("La lista ya está vacía.")
+            return
+
+        item_to_delete = ai.identify_item_to_delete(text, [r["item"] for r in current])
+        if not item_to_delete:
+            await update.message.reply_text(
+                "No pude identificar qué querés borrar. Decime algo como:\n"
+                "\"Borrá la leche\""
+            )
+            return
+
+        deleted = await db.delete_item(chat_id, item_to_delete)
+        if deleted:
+            remaining = await db.get_items(chat_id)
+            await update.message.reply_text(f"Borré: {item_to_delete}\n\n{_format_list(remaining)}")
+        else:
+            await update.message.reply_text(f"No encontré \"{item_to_delete}\" en la lista.")
+        return
+
+    if intent == "edit":
+        current = await db.get_items(chat_id)
+        if not current:
+            await update.message.reply_text("La lista ya está vacía.")
+            return
+
+        result = ai.identify_item_to_edit(text, [r["item"] for r in current])
+        if not result:
+            await update.message.reply_text(
+                "No pude identificar qué querés editar. Decime algo como:\n"
+                "\"Cambiá la leche por leche descremada\""
+            )
+            return
+
+        old_name, new_name = result
+        edited = await db.edit_item(chat_id, old_name, new_name)
+        if edited:
+            remaining = await db.get_items(chat_id)
+            await update.message.reply_text(f"Cambié \"{old_name}\" por \"{new_name}\"\n\n{_format_list(remaining)}")
+        else:
+            await update.message.reply_text(f"No encontré \"{old_name}\" en la lista.")
         return
 
     # Sin intent → extraer items

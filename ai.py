@@ -63,10 +63,7 @@ def extract_items(text: str) -> list[str]:
 
 
 def identify_bought_items(text: str, current_list: list[str]) -> list[str]:
-    """
-    Dado un mensaje del usuario y la lista actual,
-    devuelve cuáles items de la lista fueron comprados.
-    """
+    """Devuelve cuáles items de la lista fueron comprados según el mensaje."""
     if not current_list:
         return []
 
@@ -100,3 +97,77 @@ def identify_bought_items(text: str, current_list: list[str]) -> list[str]:
         return [str(i) for i in items if isinstance(i, str)]
     except json.JSONDecodeError:
         return []
+
+
+def identify_item_to_delete(text: str, current_list: list[str]) -> str | None:
+    """Identifica qué item quiere borrar el usuario. Devuelve el item exacto o None."""
+    if not current_list:
+        return None
+
+    lista_str = "\n".join(f"- {item}" for item in current_list)
+
+    response = get_client().chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Eres un asistente que identifica qué item de una lista de compras quiere borrar el usuario. "
+                    "Devuelve ÚNICAMENTE el nombre del item exactamente como aparece en la lista, sin explicaciones. "
+                    "Si no podés identificarlo, devuelve null."
+                )
+            },
+            {
+                "role": "user",
+                "content": f"Lista actual:\n{lista_str}\n\nMensaje del usuario: {text}"
+            }
+        ],
+        temperature=0,
+        max_tokens=50
+    )
+
+    raw = response.choices[0].message.content.strip()
+    if raw.lower() == "null" or not raw:
+        return None
+    return raw
+
+
+def identify_item_to_edit(text: str, current_list: list[str]) -> tuple[str, str] | None:
+    """
+    Identifica qué item quiere editar el usuario y por cuál reemplazarlo.
+    Devuelve (item_viejo, item_nuevo) o None.
+    """
+    if not current_list:
+        return None
+
+    lista_str = "\n".join(f"- {item}" for item in current_list)
+
+    response = get_client().chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Eres un asistente que identifica qué item de una lista de compras quiere editar el usuario y por cuál reemplazarlo. "
+                    "Devuelve ÚNICAMENTE un JSON con dos campos: {\"old\": \"item viejo\", \"new\": \"item nuevo\"}. "
+                    "El campo 'old' debe ser exactamente como aparece en la lista. "
+                    "Si no podés identificarlo, devuelve null."
+                )
+            },
+            {
+                "role": "user",
+                "content": f"Lista actual:\n{lista_str}\n\nMensaje del usuario: {text}"
+            }
+        ],
+        temperature=0,
+        max_tokens=100
+    )
+
+    raw = response.choices[0].message.content.strip()
+    if raw.lower() == "null" or not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        return (data["old"], data["new"])
+    except (json.JSONDecodeError, KeyError):
+        return None

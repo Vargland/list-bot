@@ -123,3 +123,25 @@ async def clear_all(chat_id: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute("DELETE FROM items WHERE chat_id = $1", chat_id)
+
+
+async def delete_item(chat_id: int, item_name: str) -> bool:
+    """Borra un item pendiente. Devuelve True si se encontró y borró."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM items WHERE chat_id = $1 AND LOWER(item) = LOWER($2) AND bought = FALSE",
+            chat_id, item_name.strip()
+        )
+    return result != "DELETE 0"
+
+
+async def edit_item(chat_id: int, old_name: str, new_name: str) -> bool:
+    """Renombra un item pendiente. Devuelve True si se encontró y editó."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE items SET item = $3 WHERE chat_id = $1 AND LOWER(item) = LOWER($2) AND bought = FALSE",
+            chat_id, old_name.strip(), new_name.strip()
+        )
+    return result != "UPDATE 0"
